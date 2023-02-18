@@ -1,0 +1,160 @@
+---
+title: "SMGT 431 Project 3"
+author: "Jacob Kauffman"
+date: "12/3/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library("rjson")
+library(jsonlite)
+library("ndjson")
+library(tidyverse)
+library(hexbin)
+library(jsonlite)
+library(httr)
+library(scales)
+```
+
+**Introduction** 
+
+*I am lucky enough to run a club for Rice's Basketball team that leverages Analytics to help improve outcomes for the team. One of our biggest responsibilities with this club involves tracking the various lineups that Rice uses and examining their performance in order to inform decisions made by the coaching staff. The data engineering alone for this effort takes a great deal of effort, and involves a large deal of manual data collection and entry.*
+
+*With an 11 man rotation, there are 252 5-man lineups that are possible, and especially in the early season, Rice coaches have not been averse to experimenting, so collecting data for all of these is a mammoth process. Ultimately though, the product is one that is essential for Rice Basketball coaches, as it gives them insights into who to play/not during critical moments of the game.*
+
+*In Basketball, simply swapping out two seemingly similarly skilled players can be the difference between a below average and an elite lineup. Figuring out a lineup that combines talent with chemistry is often what seperates the good coaches from the great, and Analytics has made this more possible than ever. In college, this is a bit tougher because there really is nowhere where lineup data is tracked effectively or made publicly available.*
+
+*Fortunately in the NBA, there are people who collect that data for us! I utilized pubicly available data from Cleaningtheglass.com to get a sense of what the best lineups in the NBA were and to then replicate the analysis in Chapter 32 of Mathletics where they found that simply subbing Tim Hardaway Jr. in for Kent Bazemore turned a slightly below average lineup into one of the NBA's best. Mathletics then asks the question if Hawks coach Mike Budenholzer made an error in playing the Kent Bazemore lineup nearly 4x as much as the Tim Hardaway Jr lineup.*
+
+
+
+```{r}
+# Reading in lineup data from 2016-17 NBA Season for all lineups with over 100 Possessions played
+nba_lineups_2016 <- read.csv("nba_lineups_2016.csv")
+```
+**Exploratory Data Analysis and Cleaning**
+
+*In order to do some exploratory data analysis, I needed to clean my data so it resembles the set that the authors of Mathletics use. The main hurdle for me to cross in my cleaning was reconciling that the Mathletics averages were organized on a per 48 basis while the Cleaningtheglass averages were all per possession. Thus, I chose to approach this by generalizing all possessions to take the league average time (14.8 seconds) and then to convert this to per 48 minute stats from there. I then wanted to consolidate all the player names into one column. From there, I wanted to use some basic R plot visualizations to examine the lineups who played the highest number of possessions, and then to look at who the most and least effective lineups in the NBA were on a per-48 basis. Interestingly, the best lineup in the NBA was one from the Toronto Raptors that didn't feature any of the league's individual superstars, thus supporting the notion that an effective lineup can be even more beneficial for a team than an all-world superstar.*
+
+*Once I did this, I took the analysis one step further and created bubbleplots for every team's best and worst lineups, analyzing how strong each team's best lineups were and also looking at if they played too much/little relative to the other team's in the league. This in particular was a really interesting analysis because it allowed me some pretty strong insights into where coaches were hesitant to play their best lineups enough or where they were playing lineups who were horribly inefficient far too often.*
+
+
+```{r}
+# First, I must manipulate the data so it is similar to the dataset that they use in Mathletics. The biggest thing here is that the dataset that I use from Cleaningtheglass.com is mostly on a per possession basis, while the one in Mathletics is on a Per-48/time-based basis. 
+
+# Finding offensive points scored by lineups
+nba_lineups_2016$Total.Off.Points <- nba_lineups_2016$OFFENSE..Pts.Poss / 100 * nba_lineups_2016$Poss
+# Finding total defensive points surrendered by lineups
+nba_lineups_2016$Total.Def.Points <- nba_lineups_2016$DEFENSE..Pts.Poss / 100 * nba_lineups_2016$Poss
+# Finding the delta between these two numbers to find lineup
+nba_lineups_2016$Lineup.Plus.Minus <- nba_lineups_2016$Total.Off.Points  - nba_lineups_2016$Total.Def.Points
+
+# According to data from inpredictable.com, NBA teams had possessions that lasted an average of 14.8 seconds. For simplicity's sake, I will assume that every NBA team has equal possession length (in reality this varies by about 3 seconds from 13-16). Also, I divide by 60 because Mathletics looks at minutes played by the lineups and not seconds.
+
+nba_lineups_2016$Minutes.Played <- nba_lineups_2016$Poss * 14.8 / 60 * 2
+nba_lineups_2016$Games.Played <- nba_lineups_2016$Minutes.Played / 48
+
+# Now I will use the formula that Mathletics uses to figure out how many points above/below average lineups are
+nba_lineups_2016$Above_Average <- nba_lineups_2016$Lineup.Plus.Minus / nba_lineups_2016$Games.Played
+
+# This data doesn't have the data of who they were on the court against, but that shouldn't have too much of an effect on the result, especially for lineups who play a lot of minutes.
+
+# Now moving into visualizations, I want to first manipulate my dataset so that I can see which lineups are playing the most
+
+nba_lineups_2016$Lineup_Name <- paste(nba_lineups_2016$PG, nba_lineups_2016$SG, nba_lineups_2016$SF, nba_lineups_2016$PF, nba_lineups_2016$C)
+nba_lineups_2016_possessions <- nba_lineups_2016 %>% arrange(-Poss)
+nba_lineups_2016_possessions1 <- head(nba_lineups_2016_possessions,10)
+nba_lineups_2016_possessions1$Lineup_Name <- factor(nba_lineups_2016_possessions1$Lineup_Name, levels = nba_lineups_2016_possessions1$Lineup_Name)
+ggplot(nba_lineups_2016_possessions1, aes(x = Lineup_Name, y = Poss)) + ggtitle("Plot of 10 lineups who played the most in the 2016-2017 NBA Season")+
+  xlab("Player Names") + ylab("Number of Possessions") + geom_bar(stat="identity") +  theme(
+plot.title = element_text(color="red", size=14, face="bold"),
+axis.title.x = element_text(color="blue", size=14, face="bold"),
+axis.title.y = element_text(color="#993333", size=14, face="bold")) +  theme(axis.text.x=element_text(angle=90,size = rel(0.5), margin = margin(0.5, unit = "cm"),vjust =1))
+
+# Next I want to get a sense of what the most efficient lineups were in the 2016-2017 season
+
+nba_lineups_2016_top <- nba_lineups_2016 %>% arrange(-Above_Average)
+nba_lineups_2016_top1 <- head(nba_lineups_2016_top,10)
+nba_lineups_2016_top1$Lineup_Name <- factor(nba_lineups_2016_top1$Lineup_Name, levels = nba_lineups_2016_top1$Lineup_Name)
+ggplot(nba_lineups_2016_top1, aes(x = Lineup_Name, y = Above_Average)) + ggtitle("Plot of 10 best lineups Per 48 in the 2016-2017 NBA Season") +
+  xlab("Player Names") + ylab("Per 48 +/-") + geom_bar(stat="identity") +  theme(
+plot.title = element_text(color="red", size=14, face="bold"),
+axis.title.x = element_text(color="blue", size=14, face="bold"),
+axis.title.y = element_text(color="#993333", size=14, face="bold")
+) +  theme(axis.text.x=element_text(angle=90,size = rel(0.5), margin = margin(0.5, unit = "cm"),vjust =1))
+
+# On the other side of this coin, I will look at which lineups were the worst in the 2016-17 season
+
+nba_lineups_2016_bottom <- nba_lineups_2016 %>% arrange(Above_Average)
+nba_lineups_2016_bottom1 <- head(nba_lineups_2016_bottom,10)
+nba_lineups_2016_bottom1$Lineup_Name <- factor(nba_lineups_2016_bottom1$Lineup_Name, levels = nba_lineups_2016_bottom1$Lineup_Name)
+ggplot(nba_lineups_2016_bottom1, aes(x = Lineup_Name, y = Above_Average)) + ggtitle("Plot of 10 worst lineups Per 48 in the 2016-2017 NBA Season")+
+  xlab("Player Names") + ylab("Per 48 +/-") + geom_bar(stat="identity") +  theme(
+plot.title = element_text(color="red", size=14, face="bold"),
+axis.title.x = element_text(color="blue", size=14, face="bold"),
+axis.title.y = element_text(color="#993333", size=14, face="bold")) +  theme(axis.text.x=element_text(angle=90,size = rel(0.5), margin = margin(0.5, unit = "cm"),vjust =1))
+
+
+nba_lineups_2016_best <- nba_lineups_2016_top[match(unique(nba_lineups_2016_top$Team),nba_lineups_2016_top$Team),]
+nba_lineups_2016_best <- head(nba_lineups_2016_best, 30)
+ggplot(nba_lineups_2016_best, aes(x = OFFENSE..Pts.Poss
+, y = DEFENSE..Pts.Poss
+,size = Poss, color = Above_Average)) + geom_text(aes(label=Team), nudge_y= -3, nudge_x= -2) + geom_point(aes(size = Poss, fill = Above_Average), alpha = 0.7) +
+scale_color_gradient(low = "#FF0000", high = "#00FF00") + scale_y_reverse() + ggtitle("Every team's best lineup during the 2016-2017 NBA Season")+ labs( x= "Offensive Points Per 48", y = "Defensive Points Per 48", size = "Number of Possessions", color = "Plus-Minus Per 48")
+
+nba_lineups_2016_worst <- nba_lineups_2016_bottom[match(unique(nba_lineups_2016_bottom$Team),nba_lineups_2016_bottom$Team),]
+nba_lineups_2016_worst <- head(nba_lineups_2016_worst, 30)
+
+ggplot(nba_lineups_2016_worst, aes(x = OFFENSE..Pts.Poss
+, y = DEFENSE..Pts.Poss
+,size = Poss, color = Above_Average)) + geom_text(aes(label=Team), nudge_y= -3, nudge_x= -2) + geom_point(aes(size = Poss, fill = Above_Average), alpha = 0.7) +
+scale_color_gradient(low = "#FF0000", high = "#00FF00") + scale_y_reverse() + ggtitle("Every team's worst lineup during the 2016-2017 NBA Season")+ labs( x= "Offensive Points Per 48", y = "Defensive Points Per 48", size = "Number of Possessions", color = "Plus-Minus Per 48")
+
+```
+
+**Methodology**
+
+*First, in order to replicate the analysis done by Mathletics, I need to use the DPLYR Package to clean data and to make it closely resemble the dataset that Mathletics used for their analysis (the most important part of this is calculating points per 48 minutes). Next, according to Mathletics, the actual performance of a lineup over 48 minutes is normally distributed with a mean equal to its lineup rating and a standard deviation of 12 points. Thus, the formula to calculate standard deviation of a lineup’s rating is 12 / sqrt(Games Lineup Plays). Next, Mathletics explains that the variance of the difference of independent RV’s is the sum of the random variable variances.*
+
+*Since the standard deviation of a RV is just the square root of the RV’s variance, we know that the standard deviation in the rating of the two lineups is given by the square root of (144 / Games Lineup 1 Played + 144 / Games Lineup 2 Played). From here, we then know that the probability that Lineup 2 is better equals the probability that a RV with mean Lineup 2 rating– Lineup 1 rating and standard deviation σ is greater than 0. To use this, we have a few options but I just decided to use R's built in dnorm function and to calculate 1 - dnorm(0,superiorlineup$Difference,superiorlineup$Sigma_Difference). This gives me the probability that the Hawks lineup feature Tim Hardaway Jr. is better than the Hawks lineup featuring Kent Bazemore.*
+
+
+
+```{r}
+# Replication of Mathletics
+
+nba_lineups_2016_hawks <- nba_lineups_2016 %>% slice(14, 98)
+nba_lineups_2016_hawks$Lineup <- c(1,2)
+nba_lineups_2016_hawks$FifthMan <- nba_lineups_2016_hawks$SG
+nba_lineups_2016_hawks <- data.frame(cbind(nba_lineups_2016_hawks[,c(38,37,9,33,34)]))
+nba_lineups_2016_hawks
+
+# According to Mathletics, the actual performance of a lineup can be determined by looking at a normal distribution with a mean equal to its lineup rating 
+
+nba_lineups_2016_hawks$Standard_Deviation <- 12 / sqrt(nba_lineups_2016_hawks$Games.Played)
+
+# Creating second dataframe to analyze the superior lineup
+
+superiorlineup <- data.frame("Difference", "Variance Difference", "Sigma Difference", "Probability Lineup 2 is better")
+superiorlineup$Difference <- nba_lineups_2016_hawks[1,3] - nba_lineups_2016_hawks[2,3]
+superiorlineup$Variance_Difference <- (144 / nba_lineups_2016_hawks[1,5]) + (144 / nba_lineups_2016_hawks[2,5])
+superiorlineup$Sigma_Difference <- sqrt((144 / nba_lineups_2016_hawks[1,5]) + 144 / nba_lineups_2016_hawks[2,5])
+superiorlineup$Probability_Lineup_2_is_better <- 1 - dnorm(0,superiorlineup$Difference,superiorlineup$Sigma_Difference)
+superiorlineup <- data.frame(cbind(superiorlineup[,c(5,6,7,8)]))
+superiorlineup
+```
+**Results and Discussion**
+
+*As seen in the above table, the probability that the Hawks Tim Hardaway Jr. lineup is better than their Kent Bazemore lineup can be is over 99.99%, derived from a Sigma Difference of 8.53 and it is likely that coach Mike Budenholzer made a bad decision in not playing them more often. Though this may seem like a relatively easy insight to glean, this ultimately came down to the rather large sample size in possessions that both of these lineups played.*
+
+*Because the Kent Bazemore had seen almost 9 full games of action and the Tim Hardaway lineup had more more than 2.5, it is a lot easier to make judgements on lineup effectiveness than if the two lineups had only played the minimum 100 possessions. It would been particularly beneficial for Mike Budenholzer to have realized this during the last stretch of the regular season, as his team lost 8 straight games to close the season and lost their first round standing in the playoffs, going on the lose to the Washington Wizards in 6 games.*
+
+**Conclusion**
+
+*From my analysis and results, which suggest more or less the same thing as Mathletics down to 0.001% (I believe that these differences are because Mathletics' dataset contains playoffs and mine doesn't as well as the fact that I generalized possession length to be 14.8 seconds), I can reasonably conclude that the Tim Hardaway Jr. lineup was stronger and that coaching staff should have utilized it more during the season instead of using Kent Bazemore with the starters so frequently.*
+
+*This takeaway, in tandem with much of my exploratory data analysis, suggests that performance of specific lineups is crucial in determining team success, perhaps moreso than individual player performance. It also supports the notion teams can see large boosts in performance by simply swapping out one weak link in a lineup, as the Hawks went from a solidly below-average lineup to among the league's best by swapping just one player, as did several other teams. This analysis should indeed be useful for both NBA and college coaching staffs as they continue to solve the puzzle of what makes an effective lineup and how it differs from individual player performance.*
